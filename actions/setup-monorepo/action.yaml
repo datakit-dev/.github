@@ -1,0 +1,94 @@
+name: Setup Monorepo
+description: Clone down the DataKit Monorepo and the specified repositories with sparse-checkout.
+
+inputs:
+  fetch-depth:
+    description: The number of commits to fetch for the current repository. 0 indicates all history.
+    required: false
+    default: '1'
+
+  dtkt-dev-sparse-checkout:
+    description: If specified will clone down the dtkt-dev repository and sparse-checkout the specified path(s).
+    required: false
+  dtkt-ts-sparse-checkout:
+    description: If specified will clone down the dtkt-ts repository and sparse-checkout the specified path(s).
+    required: false
+  dtkt-core-sparse-checkout:
+    description: If specified will clone down the dtkt-core repository and sparse-checkout the specified path(s).
+    required: false
+  dtkt-sdk-sparse-checkout:
+    description: If specified will clone down the dtkt-sdk repository and sparse-checkout the specified path(s).
+    required: false
+
+  dtkt-github-actions-app-id:
+    description: The GitHub App ID for the DataKit GitHub App
+    required: true
+  dtkt-github-actions-private-key:
+    description: The private key for the DataKit GitHub App
+    required: true
+
+runs:
+  using: composite
+  steps:
+  - uses: actions/create-github-app-token@v3
+    id: app-token
+    with:
+      app-id: ${{ inputs.dtkt-github-actions-app-id }}
+      private-key: ${{ inputs.dtkt-github-actions-private-key }}
+      owner: datakit-dev
+      repositories: dtkt-universe,dtkt-dev,dtkt-ts,dtkt-core,dtkt-sdk,dtkt-cli,dtkt-integrations
+
+  - name: Extract repository name
+    id: repo-name
+    shell: bash
+    run: echo "name=${GITHUB_REPOSITORY#$GITHUB_REPOSITORY_OWNER/}" >> $GITHUB_OUTPUT
+
+  - name: Checkout dtkt-universe
+    uses: actions/checkout@v6
+    with:
+      path: dtkt-universe
+      ref: main
+      repository: datakit-dev/dtkt-universe
+      submodules: false
+      token: ${{ steps.app-token.outputs.token }}
+
+  - uses: actions/checkout@v6
+    if: inputs.dtkt-dev-sparse-checkout && steps.repo-name.outputs.name != 'dtkt-dev'
+    with:
+      path: dtkt-universe/dtkt-dev
+      repository: datakit-dev/dtkt-dev
+      ref: main
+      sparse-checkout: ${{ inputs.dtkt-dev-sparse-checkout }}
+      token: ${{ steps.app-token.outputs.token }}
+
+  - uses: actions/checkout@v6
+    if: inputs.dtkt-ts-sparse-checkout && steps.repo-name.outputs.name != 'dtkt-ts'
+    with:
+      path: dtkt-universe/dtkt-ts
+      repository: datakit-dev/dtkt-ts
+      ref: main
+      sparse-checkout: ${{ inputs.dtkt-ts-sparse-checkout }}
+      token: ${{ steps.app-token.outputs.token }}
+
+  - uses: actions/checkout@v6
+    if: inputs.dtkt-core-sparse-checkout && steps.repo-name.outputs.name != 'dtkt-core'
+    with:
+      path: dtkt-universe/dtkt-core
+      repository: datakit-dev/dtkt-core
+      ref: main
+      sparse-checkout: ${{ inputs.dtkt-core-sparse-checkout }}
+      token: ${{ steps.app-token.outputs.token }}
+
+  - uses: actions/checkout@v6
+    if: inputs.dtkt-sdk-sparse-checkout && steps.repo-name.outputs.name != 'dtkt-sdk'
+    with:
+      path: dtkt-universe/dtkt-sdk
+      repository: datakit-dev/dtkt-sdk
+      ref: main
+      sparse-checkout: ${{ inputs.dtkt-sdk-sparse-checkout }}
+      token: ${{ steps.app-token.outputs.token }}
+
+  - uses: actions/checkout@v6
+    with:
+      path: dtkt-universe/${{ steps.repo-name.outputs.name }}
+      fetch-depth: ${{ inputs.fetch-depth }}

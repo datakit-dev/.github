@@ -1,0 +1,133 @@
+name: Deploy
+description: Deploy a DataKit application using `argocd app sync`
+
+inputs:
+  project-name:
+    description: The name of the project
+    required: true
+  argocd-server:
+    description: The ArgoCD server URL
+    required: true
+  argocd-auth-token:
+    description: The ArgoCD authentication token
+    required: true
+  argocd-app-name:
+    description: The name of the ArgoCD application
+    required: true
+  images:
+    description: The images to deploy
+    required: false
+  dtkt-github-actions-app-id:
+    description: The GitHub App ID for the DataKit GitHub App
+    required: true
+  dtkt-github-actions-private-key:
+    description: The private key for the DataKit GitHub App
+    required: true
+
+runs:
+  using: composite
+  steps:
+  - name: Set ArgoCD Revision and Images
+    run: |
+      KUSTOMIZE_ARGS=""
+      if [[ -n "${{ inputs.images }}" ]]; then
+        while IFS= read -r image; do
+          if [[ -n "$image" ]]; then
+            KUSTOMIZE_ARGS+=" --kustomize-image $image"
+          fi
+        done <<< "${{ inputs.images }}"
+      fi
+
+      argocd --server ${{ inputs.argocd-server }} --auth-token ${{ inputs.argocd-auth-token }} --grpc-web \
+        app set ${{ inputs.argocd-app-name }} \
+        --revision ${{ github.sha }} \
+        $KUSTOMIZE_ARGS
+    shell: bash
+
+  - name: Deploy ArgoCD App
+    run: |
+      argocd --server ${{ inputs.argocd-server }} --auth-token ${{ inputs.argocd-auth-token }} --grpc-web \
+        app sync ${{ inputs.argocd-app-name }} \
+        --prune --timeout 300
+
+      argocd --server ${{ inputs.argocd-server }} --auth-token ${{ inputs.argocd-auth-token }} --grpc-web \
+        app wait ${{ inputs.argocd-app-name }} \
+        --health --timeout 300
+    shell: bash
+
+  - uses: actions/create-github-app-token@v3
+    id: app-token
+    with:
+      app-id: ${{ inputs.dtkt-github-actions-app-id }}
+      private-key: ${{ inputs.dtkt-github-actions-private-key }}
+      owner: datakit-dev
+      repositories: dtkt-infra
+
+  - uses: actions/checkout@v6
+    with:
+      repository: datakit-dev/dtkt-infra
+      sparse-checkout: argocd/apps/infra/kustomize/overlays/prd/patches/${{ inputs.project-name }}
+      path: ./dtkt-infra
+      token: ${{ steps.app-token.outputs.token }}
+
+  - name: Update App of Apps Revision
+    run: |
+      file_path=./argocd/apps/infra/kustomize/overlays/prd/patches/${{ inputs.project-name }}/${{ inputs.argocd-app-name }}-app.yaml
+      revision=${{ github.sha }} yq e -i '(.[] | select(.op == "replace" and .path == "/spec/source/targetRevision") .value) = env(revision)' $file_path
+    working-directory: ./dtkt-infra
+    shell: bash
+
+  - name: Push App of Apps
+    run: |
+      repository=datakit-dev/dtkt-infra
+      token="${{ steps.app-token.outputs.token }}"
+      file_path=argocd/apps/infra/kustomize/overlays/prd/patches/${{ inputs.project-name }}/${{ inputs.argocd-app-name }}-app.yaml
+
+      # Get the contents of the file; jq -Rs escapes new lines and quotes
+      file_content=$(jq -Rs '.' $file_path)
+
+      # Get the latest commit
+      latest_commit=$(curl -s -H "Authorization: token $token" \
+        "https://api.github.com/repos/${repository}/git/refs/heads/main" \
+        | jq -r '.object.sha')
+
+      # Get the tree of the latest commit
+      base_tree=$(curl -s -H "Authorization: token $token" \
+        "https://api.github.com/repos/${repository}/git/commits/${latest_commit}" \
+        | jq -r '.tree.sha')
+
+      # Create a new tree with the new files
+      tree=$(curl -s -H "Authorization: token $token" -X POST \
+        -d '{
+          "base_tree": "'"$base_tree"'",
+          "tree": [
+            {
+              "path": "'"$file_path"'",
+              "mode": "100644",
+              "type": "blob",
+              "content": '"$file_content"'
+            }
+          ]
+        }' "https://api.github.com/repos/${repository}/git/trees")
+
+      # Get the SHA of the new tree
+      new_tree_sha=$(echo $tree | jq -r '.sha')
+
+      # Create a new commit pointing to the new tree
+      commit=$(curl -sf -H "Authorization: token $token" -X POST \
+        -d '{
+          "message": "[skip ci] Deployed ${{ inputs.argocd-app-name }} with revision ${{ github.sha }}",
+          "tree": "'"$new_tree_sha"'",
+          "parents": ["'"$latest_commit"'"]
+        }' "https://api.github.com/repos/${repository}/git/commits")
+
+      # Get the SHA of the new commit
+      new_commit_sha=$(echo $commit | jq -r '.sha')
+
+      # Update the reference of the branch to point to the new commit
+      curl -s -H "Authorization: token $token" -X PATCH \
+        -d '{
+          "sha": "'"$new_commit_sha"'"
+        }' "https://api.github.com/repos/${repository}/git/refs/heads/main"
+    working-directory: ./dtkt-infra
+    shell: bash

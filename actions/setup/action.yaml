@@ -1,0 +1,100 @@
+name: Setup
+description: Setup Task, SOPS, ArgoCD, and other tools for use in GitHub Actions.
+
+inputs:
+  task:
+    description: Install Task?
+  cosign:
+    description: Install cosign?
+  syft:
+    description: Install syft?
+  sops:
+    description: Install SOPS?
+  argocd:
+    description: Install ArgoCD?
+  node:
+    description: Install node and pnpm?
+  go:
+    description: Install go?
+  pnpm-cache-dependency-path:
+    description: The path to the pnpm cache dependencies. Set to empty string to disable caching (useful for pnpm dlx without a lockfile).
+    default: |
+      "**/pnpm-lock.yaml"
+  go-cache-dependency-path:
+    description: The path to the go cache dependencies.
+    default: |
+      "**/go.sum"
+      "**/go.work.sum"
+  versions:
+    description: JSON string of the versions to install
+
+runs:
+  using: composite
+  steps:
+  - name: Install Task
+    if: ${{ inputs.task == 'true' }}
+    run: |
+      ./scripts/install-task.sh ${{ fromJSON(inputs.versions).task }}
+      task --version
+      echo "TASK_PATH=$(pwd)/tasks" >> $GITHUB_ENV
+    working-directory: dtkt-universe/dtkt-dev
+    shell: bash
+
+  - name: Install cosign
+    if: ${{ inputs.cosign == 'true' || inputs.sops == 'true' }}
+    run: |
+      ./scripts/install-cosign.sh ${{ fromJSON(inputs.versions).cosign }}
+      cosign version
+    working-directory: dtkt-universe/dtkt-dev
+    shell: bash
+
+  - name: Install syft
+    if: ${{ inputs.syft == 'true' }}
+    run: |
+      ./scripts/install-syft.sh ${{ fromJSON(inputs.versions).syft }}
+      syft version
+    working-directory: dtkt-universe/dtkt-dev
+    shell: bash
+
+  - name: Install SOPS
+    if: ${{ inputs.sops == 'true' }}
+    run: |
+      ./scripts/install-sops.sh ${{ fromJSON(inputs.versions).sops }}
+      sops --version
+    working-directory: dtkt-universe/dtkt-dev
+    shell: bash
+
+  - name: Install ArgoCD
+    if: ${{ inputs.argocd == 'true' }}
+    run: |
+      ./scripts/install-argocd.sh ${{ fromJSON(inputs.versions).argocd }}
+      argocd version --client
+    working-directory: dtkt-universe/dtkt-dev
+    shell: bash
+
+  - name: Install pnpm
+    if: ${{ inputs.node == 'true' }}
+    uses: pnpm/action-setup@v5
+    with:
+      version: ${{ fromJSON(inputs.versions).pnpm }}
+      run_install: false
+
+  - name: Install Node.js
+    if: ${{ inputs.node == 'true' }}
+    uses: actions/setup-node@v6
+    with:
+      node-version: ${{ fromJSON(inputs.versions).node }}
+      cache: ${{ inputs.pnpm-cache-dependency-path && 'pnpm' || '' }}
+      cache-dependency-path: ${{ inputs.pnpm-cache-dependency-path }}
+
+  - name: Install Go
+    if: ${{ inputs.go == 'true' }}
+    uses: actions/setup-go@v6
+    with:
+      go-version: ${{ fromJSON(inputs.versions).go }}
+      cache-dependency-path: ${{ inputs.go-cache-dependency-path }}
+
+  - name: Setup Go
+    if: ${{ inputs.go == 'true' }}
+    run: go env -w GOPRIVATE="github.com/datakit-dev/*"
+    shell: bash

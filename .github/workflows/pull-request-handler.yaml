@@ -1,0 +1,133 @@
+name: Pull Request Handler
+
+on:
+  workflow_call:
+    inputs:
+      labeler-config-path:
+        required: true
+        type: string
+      commitlint-config-path:
+        required: false
+        type: string
+
+jobs:
+  triage:
+    runs-on: ${{ vars.RUNNER }}
+
+    steps:
+    - uses: actions/labeler@v6
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        configuration-path: ${{ inputs.labeler-config-path }}
+
+  conventional-commits:
+    runs-on: ${{ vars.RUNNER }}
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - name: Install commitlint dependencies
+      run: npm install @commitlint/cli @commitlint/config-conventional
+
+    - name: Create commitlint config
+      if: ${{ !inputs.commitlint-config-path }}
+      run: |
+        cat <<EOF > commitlint.config.ts
+        export default {
+          extends: [
+            "@commitlint/config-conventional",
+          ],
+        };
+        EOF
+
+    - name: Validate PR title
+      id: pr-title
+      continue-on-error: true
+      env:
+        PR_TITLE: ${{ github.event.pull_request.title }}
+      run: |
+        tmpfile=$(mktemp)
+
+        echo "$PR_TITLE" | npx commitlint \
+          --config "${{ inputs.commitlint-config-path || 'commitlint.config.ts' }}" \
+          --no-color \
+          --verbose 2>&1 | tee "$tmpfile"
+
+        exit_code=${PIPESTATUS[1]}
+
+        {
+          echo "output<<EOF"
+          cat "$tmpfile"
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+
+        exit $exit_code
+
+    - name: Comment on PR for PR title linting failure
+      if: steps.pr-title.outcome == 'failure'
+      uses: actions/github-script@v8
+      env:
+        PR_TITLE_OUTPUT: ${{ steps.pr-title.outputs.output }}
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const output = process.env.PR_TITLE_OUTPUT;
+          const prNumber = context.issue.number;
+
+          const body = `### ⚠️ PR title issues detected:\n\`\`\`\n${output}\n\`\`\``;
+
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: prNumber,
+            body: body
+          });
+
+    - name: Validate commit messages
+      id: commit-messages
+      continue-on-error: true
+      run: |
+        tmpfile=$(mktemp)
+
+        npx commitlint \
+          --config "${{ inputs.commitlint-config-path || 'commitlint.config.ts' }}" \
+          --from "${{ github.event.pull_request.base.sha }}" \
+          --to "${{ github.event.pull_request.head.sha }}" \
+          --no-color \
+          --verbose 2>&1 | tee "$tmpfile"
+
+        exit_code=${PIPESTATUS[0]}
+
+        {
+          echo "output<<EOF"
+          cat "$tmpfile"
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+
+        exit $exit_code
+
+    - name: Comment on PR for commit messages linting failure
+      if: steps.commit-messages.outcome == 'failure'
+      uses: actions/github-script@v8
+      env:
+        COMMIT_MESSAGES_OUTPUT: ${{ steps.commit-messages.outputs.output }}
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const output = process.env.COMMIT_MESSAGES_OUTPUT;
+          const prNumber = context.issue.number;
+
+          const body = `### ⚠️ Commit message issues detected:\n\`\`\`\n${output}\n\`\`\``;
+
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: prNumber,
+            body: body
+          });
+
+    - name: Fail workflow if validation failed
+      if: steps.pr-title.outcome == 'failure' || steps.commit-messages.outcome == 'failure'
+      run: exit 1
