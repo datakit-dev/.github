@@ -1,0 +1,12 @@
+blank_issues_enabled: false
+
+contact_links:
+- name: Have you read the docs?
+  url: https://withdatakit.com/devlopers
+  about: Much help can be found in the docs!
+- name: Ask a question
+  url: https://github.com/orgs/datakit-dev/discussions/new/choose
+  about: Ask a question or start a discussion about DataKit!
+- name: Chat on Discord
+  url: https://dtkt.dev/join-discord
+  about: Maybe chatting with the community can help?

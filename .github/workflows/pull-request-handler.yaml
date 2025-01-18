@@ -1,0 +1,87 @@
+name: Pull Request Handler
+
+on:
+  workflow_call:
+    inputs:
+      labeler-config-path:
+        required: true
+        type: string
+      commitlint-config-path:
+        required: false
+        type: string
+
+jobs:
+  triage:
+    runs-on: ${{ vars.RUNNER }}
+
+    steps:
+    - uses: actions/labeler@v5
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        configuration-path: ${{ inputs.labeler-config-path }}
+
+  conventional-commits:
+    runs-on: ${{ vars.RUNNER }}
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install commitlint dependencies
+      run: npm install @commitlint/cli @commitlint/config-conventional
+    
+    - name: Create commitlint config
+      if: ${{ !inputs.commitlint-config-path }}
+      run: |
+        cat <<EOF > commitlint.config.ts
+        export default {
+          extends: [
+            "@commitlint/config-conventional",
+          ],
+        };
+        EOF
+
+    - name: Run commitlint and capture output
+      id: commitlint
+      continue-on-error: true
+      run: |
+        tmpfile=$(mktemp)
+
+        npx commitlint \
+          --config "${{ inputs.commitlint-config-path || 'commitlint.config.ts' }}" \
+          --from "${{ github.event.pull_request.base.sha }}" \
+          --to "${{ github.event.pull_request.head.sha }}" \
+          --verbose 2>&1 | tee "$tmpfile"
+
+        exit_code=${PIPESTATUS[0]}
+
+        {
+          echo "output<<EOF"
+          cat "$tmpfile"
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+
+        exit $exit_code
+
+    - name: Comment on PR for commitlint failure
+      if: steps.commitlint.outcome == 'failure'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const output = `${{ steps.commitlint.outputs.output }}`;
+          const prNumber = context.issue.number;
+          
+          const body = `### ⚠️ Commitlint Issues Detected:\n\`\`\`\n${output}\n\`\`\``;
+
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: prNumber,
+            body: body
+          });
+
+    - name: Fail workflow if commitlint failed
+      if: steps.commitlint.outcome == 'failure'
+      run: exit 1

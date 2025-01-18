@@ -1,0 +1,31 @@
+name: Stale Issues
+
+on:
+  workflow_call:
+
+jobs:
+  stale:
+    runs-on: ${{ vars.RUNNER }}
+
+    steps:
+    - uses: actions/stale@v9
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+        stale-issue-message: >
+          This issue has been quiet issue for a while, so we're marking it as stale.
+          If there is no activity soon, it will be closed.
+          Thanks for your help!
+
+        close-issue-message: >
+          Closing this issue due to inactivity.
+          If you think this is a mistake, please feel free to reopen it.
+
+        stale-pr-message: >
+          This pull request has been quiet for a while, so we're marking it as stale.
+          If there's no activity soon, it will be closed.
+          Thanks for your contributions!
+
+        close-pr-message: >
+          Closing this pull request due to inactivity.
+          If you think this is a mistake, please feel free to reopen it.
